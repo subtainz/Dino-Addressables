@@ -1,0 +1,711 @@
+using System.Collections;
+using TMPro;
+using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.AsyncOperations;
+
+public class RemoteMapLoader : MonoBehaviour
+{
+    [Header("Addressables")]
+    [SerializeField] private string mapAddress = "Map_China";
+
+    [Header("Spawn")]
+    [SerializeField] private Transform spawnPoint;
+
+    [Header("Debug UI")]
+    [SerializeField] private TMP_Text DebuggerText;
+
+    private GameObject loadedMap;
+
+    private bool isLoading = false;
+
+
+    private void Update()
+    {
+        if (Input.GetKeyUp(KeyCode.Q) && !isLoading)
+        {
+            //StartCoroutine(DownloadMapSync());
+            StartCoroutine(DownloadMap());
+        }
+
+        if (Input.GetKeyUp(KeyCode.W))
+        {
+            ClearAddressablesCache();
+        }
+    }
+
+
+    #region MapDownloader
+
+    private IEnumerator  DownloadMap()
+    {
+        isLoading = true;
+
+        DebugMessage("REMOTE MAP TEST START");
+
+
+        // =========================================================
+        // 1. INITIALIZE ADDRESSABLES
+        // =========================================================
+
+        Debug.Log("Initializing Addressables...");
+        DebugMessage("Initializing Addressables...");
+
+        var initHandle = Addressables.InitializeAsync(false);
+
+        yield return initHandle;
+
+        if (initHandle.Status != AsyncOperationStatus.Succeeded)
+        {
+            string error =
+                initHandle.OperationException != null
+                    ? initHandle.OperationException.ToString()
+                    : "Unknown initialization error.";
+
+            Debug.LogError(
+                "Addressables initialization failed:\n" + error
+            );
+
+            DebugMessage(
+                "ADDRESSABLE INITIALIZATION FAILED\n" + error
+            );
+
+            Addressables.Release(initHandle);
+
+            isLoading = false;
+            yield break;
+        }
+
+        Debug.Log("Addressables initialized.");
+        DebugMessage("Addressables initialized.");
+
+        Addressables.Release(initHandle);
+
+
+        var sizeHandle =
+            Addressables.GetDownloadSizeAsync(
+                mapAddress
+            );
+
+        yield return sizeHandle;
+
+
+        if (sizeHandle.Status !=
+            AsyncOperationStatus.Succeeded)
+        {
+            string error =
+                sizeHandle.OperationException != null
+                    ? sizeHandle.OperationException.ToString()
+                    : "Unknown download-size error.";
+
+            Debug.LogError(
+                "GetDownloadSize failed:\n" +
+                error
+            );
+
+            DebugMessage(
+                "DOWNLOAD SIZE ERROR\n" +
+                error
+            );
+
+            Addressables.Release(sizeHandle);
+
+            isLoading = false;
+            yield break;
+        }
+
+
+        long downloadSize =
+            sizeHandle.Result;
+
+
+        Debug.Log(
+            "Required Download: " +
+            FormatBytes(downloadSize)
+        );
+
+        DebugMessage(
+            "Required Download: " +
+            FormatBytes(downloadSize)
+        );
+
+
+        Addressables.Release(sizeHandle);
+
+
+
+        // =========================================================
+        // 3. DOWNLOAD REMOTE DEPENDENCIES
+        // =========================================================
+
+        if (downloadSize > 0)
+        {
+            Debug.Log(
+                "Starting Map Download..."
+            );
+
+            DebugMessage(
+                "Starting Map Download..."
+            );
+
+
+            var downloadHandle =
+                Addressables.DownloadDependenciesAsync(
+                    mapAddress
+                );
+
+
+            while (!downloadHandle.IsDone)
+            {
+                float progress =
+                    downloadHandle.PercentComplete * 100f;
+
+
+                DebugMessage(
+                    "Downloading Map...\n" +
+                    progress.ToString("F1") +
+                    "%"
+                );
+
+
+                yield return null;
+            }
+
+
+            if (downloadHandle.Status !=
+                AsyncOperationStatus.Succeeded)
+            {
+                string error =
+                    downloadHandle.OperationException != null
+                        ? downloadHandle.OperationException.ToString()
+                        : "Unknown download error.";
+
+
+                Debug.LogError(
+                    "Map download failed:\n" +
+                    error
+                );
+
+
+                DebugMessage(
+                    "DOWNLOAD FAILED\n" +
+                    error
+                );
+
+
+                Addressables.Release(
+                    downloadHandle
+                );
+
+
+                isLoading = false;
+                yield break;
+            }
+
+
+            Debug.Log(
+                "Download Completed!"
+            );
+
+            DebugMessage(
+                "DOWNLOAD COMPLETED!"
+            );
+
+
+            Addressables.Release(
+                downloadHandle
+            );
+        }
+        else
+        {
+            Debug.Log(
+                "Map already downloaded / cached."
+            );
+
+            DebugMessage(
+                "Map already downloaded / cached."
+            );
+        }
+
+
+
+        // =========================================================
+        // 4. LOAD MAP PREFAB
+        // =========================================================
+
+        Debug.Log(
+            "Loading Map..."
+        );
+
+        DebugMessage(
+            "Loading Map..."
+        );
+
+
+        var loadHandle =
+            Addressables.LoadAssetAsync<GameObject>(
+                mapAddress
+            );
+
+
+        yield return loadHandle;
+
+
+        if (loadHandle.Status !=
+            AsyncOperationStatus.Succeeded)
+        {
+            string error =
+                loadHandle.OperationException != null
+                    ? loadHandle.OperationException.ToString()
+                    : "Unknown load error.";
+
+
+            Debug.LogError(
+                "Map load failed:\n" +
+                error
+            );
+
+
+            DebugMessage(
+                "MAP LOAD FAILED\n" +
+                error
+            );
+
+
+            isLoading = false;
+            yield break;
+        }
+
+
+        GameObject mapPrefab =
+            loadHandle.Result;
+
+
+
+        // =========================================================
+        // 5. CHECK SPAWN POINT
+        // =========================================================
+
+        if (spawnPoint == null)
+        {
+            Debug.LogError(
+                "Spawn Point is not assigned!"
+            );
+
+
+            DebugMessage(
+                "ERROR: Spawn Point is not assigned!"
+            );
+
+
+            isLoading = false;
+            yield break;
+        }
+
+
+
+        // =========================================================
+        // 6. INSTANTIATE MAP
+        // =========================================================
+
+        loadedMap = Instantiate(
+            mapPrefab,
+            spawnPoint.position,
+            spawnPoint.rotation,
+            spawnPoint.parent
+        );
+
+
+        loadedMap.name =
+            mapPrefab.name;
+
+
+        Debug.Log(
+            "MAP LOADED SUCCESSFULLY!"
+        );
+
+
+        DebugMessage(
+            "MAP LOADED SUCCESSFULLY!"
+        );
+
+
+        isLoading = false;
+    }
+
+
+
+
+    #endregion
+
+
+
+    #region For Testing Pursose 
+
+    IEnumerator DownloadMapSync()
+    {
+        string catalogUrl =
+            "http://127.0.0.1:8000/catalog_2026.08.20.13.28.31.bin";
+
+        Debug.Log("=== REMOTE ADDRESSABLE TEST ===");
+
+        DebuggerText.text =
+            "REMOTE ADDRESSABLE TEST\n" +
+            "Loading Catalog...\n" +
+            catalogUrl;
+
+        // --------------------------------------------------
+        // LOAD REMOTE CATALOG DIRECTLY
+        // --------------------------------------------------
+
+        var catalogHandle =
+            Addressables.LoadContentCatalogAsync(
+                catalogUrl,
+                false
+            );
+
+        yield return catalogHandle;
+
+        Debug.Log(
+            "Catalog Status: " +
+            catalogHandle.Status
+        );
+
+        DebuggerText.text +=
+            "\n\nCatalog Status: " +
+            catalogHandle.Status;
+
+        if (catalogHandle.Status !=
+            AsyncOperationStatus.Succeeded)
+        {
+            Debug.LogError(
+                "CATALOG LOAD FAILED: " +
+                catalogHandle.OperationException
+            );
+
+            DebuggerText.text +=
+                "\n\nCATALOG ERROR:\n" +
+                catalogHandle.OperationException;
+
+            yield break;
+        }
+
+        Debug.Log("REMOTE CATALOG LOADED!");
+
+        DebuggerText.text +=
+            "\nREMOTE CATALOG LOADED!";
+
+
+        // --------------------------------------------------
+        // CHECK DOWNLOAD SIZE
+        // --------------------------------------------------
+
+        Debug.Log("Checking Map_China download size...");
+
+        DebuggerText.text +=
+            "\n\nChecking Map_China download size...";
+
+        var sizeHandle =
+            Addressables.GetDownloadSizeAsync(mapAddress);
+
+        yield return sizeHandle;
+
+        if (sizeHandle.Status !=
+            AsyncOperationStatus.Succeeded)
+        {
+            Debug.LogError(
+                "DOWNLOAD SIZE FAILED: " +
+                sizeHandle.OperationException
+            );
+
+            DebuggerText.text +=
+                "\n\nSIZE ERROR:\n" +
+                sizeHandle.OperationException;
+
+            Addressables.Release(sizeHandle);
+
+            yield break;
+        }
+
+        long downloadSize = sizeHandle.Result;
+
+        Debug.Log(
+            "Required Download: " +
+            FormatBytes(downloadSize)
+        );
+
+        DebuggerText.text +=
+            "\nRequired Download: " +
+            FormatBytes(downloadSize);
+
+        Addressables.Release(sizeHandle);
+
+
+        // --------------------------------------------------
+        // DOWNLOAD
+        // --------------------------------------------------
+
+        if (downloadSize > 0)
+        {
+            Debug.Log("Starting Map Download...");
+
+            DebuggerText.text +=
+                "\nStarting Map Download...";
+
+            var downloadHandle =
+                Addressables.DownloadDependenciesAsync(
+                    mapAddress
+                );
+
+            while (!downloadHandle.IsDone)
+            {
+                float progress =
+                    downloadHandle.PercentComplete * 100f;
+
+                DebuggerText.text =
+                    "REMOTE ADDRESSABLE TEST\n" +
+                    "Downloading Map...\n" +
+                    progress.ToString("F1") +
+                    "%";
+
+                yield return null;
+            }
+
+            if (downloadHandle.Status !=
+                AsyncOperationStatus.Succeeded)
+            {
+                Debug.LogError(
+                    "DOWNLOAD FAILED: " +
+                    downloadHandle.OperationException
+                );
+
+                DebuggerText.text +=
+                    "\n\nDOWNLOAD ERROR:\n" +
+                    downloadHandle.OperationException;
+
+                Addressables.Release(downloadHandle);
+
+                yield break;
+            }
+
+            Debug.Log("DOWNLOAD COMPLETED!");
+
+            DebuggerText.text +=
+                "\nDOWNLOAD COMPLETED!";
+
+            Addressables.Release(downloadHandle);
+        }
+        else
+        {
+            Debug.Log(
+                "Map already downloaded / cached."
+            );
+
+            DebuggerText.text +=
+                "\nMap already downloaded / cached.";
+        }
+
+
+        // --------------------------------------------------
+        // LOAD MAP
+        // --------------------------------------------------
+
+        Debug.Log("Loading Map...");
+
+        DebuggerText.text +=
+            "\nLoading Map...";
+
+        var loadHandle =
+            Addressables.LoadAssetAsync<GameObject>(
+                mapAddress
+            );
+
+        yield return loadHandle;
+
+        if (loadHandle.Status !=
+            AsyncOperationStatus.Succeeded)
+        {
+            Debug.LogError(
+                "MAP LOAD FAILED: " +
+                loadHandle.OperationException
+            );
+
+            DebuggerText.text +=
+                "\n\nMAP LOAD ERROR:\n" +
+                loadHandle.OperationException;
+
+            yield break;
+        }
+
+        GameObject mapPrefab =
+            loadHandle.Result;
+
+
+        // --------------------------------------------------
+        // INSTANTIATE
+        // --------------------------------------------------
+
+        if (spawnPoint == null)
+        {
+            Debug.LogError(
+                "Spawn Point is not assigned!"
+            );
+
+            yield break;
+        }
+
+        loadedMap = Instantiate(
+            mapPrefab,
+            spawnPoint.position,
+            spawnPoint.rotation,
+            spawnPoint.parent
+        );
+
+        loadedMap.name =
+            mapPrefab.name;
+
+        Debug.Log(
+            "MAP LOADED SUCCESSFULLY!"
+        );
+
+        DebuggerText.text +=
+            "\n\nMAP LOADED SUCCESSFULLY!";
+    }
+
+
+    #endregion
+    // =============================================================
+    // DEBUG TEXT
+    // =============================================================
+
+    private void DebugMessage(string message)
+    {
+        if (DebuggerText != null)
+        {
+            DebuggerText.text += message;
+        }
+    }
+
+
+
+    // =============================================================
+    // FORMAT BYTES
+    // =============================================================
+
+    private string FormatBytes(long bytes)
+    {
+        if (bytes >= 1024L * 1024L * 1024L)
+        {
+            return (
+                bytes /
+                1024f /
+                1024f /
+                1024f
+            ).ToString("F2") + " GB";
+        }
+
+
+        if (bytes >= 1024L * 1024L)
+        {
+            return (
+                bytes /
+                1024f /
+                1024f
+            ).ToString("F2") + " MB";
+        }
+
+
+        if (bytes >= 1024L)
+        {
+            return (
+                bytes /
+                1024f
+            ).ToString("F2") + " KB";
+        }
+
+
+        return bytes + " Bytes";
+    }
+
+
+    [ContextMenu("Clear China Map Cache")]
+    private void ClearChinaMapCache()
+    {
+        StartCoroutine(ClearMapChinaCache());
+    }
+
+    private IEnumerator ClearMapChinaCache()
+    {
+        Debug.Log("========== CLEAR CACHE START ==========");
+
+        if (loadedMap != null)
+        {
+            Destroy(loadedMap);
+            loadedMap = null;
+            yield return null;
+        }
+
+        Debug.Log("Map Address: " + mapAddress);
+
+        var locationsHandle =
+            Addressables.LoadResourceLocationsAsync(mapAddress);
+
+        yield return locationsHandle;
+
+        if (locationsHandle.Status != AsyncOperationStatus.Succeeded)
+        {
+            Debug.LogError("Could not resolve Addressable location!");
+            Addressables.Release(locationsHandle);
+            yield break;
+        }
+
+        Debug.Log(
+            "Locations found: " +
+            locationsHandle.Result.Count
+        );
+
+        var clearHandle =
+            Addressables.ClearDependencyCacheAsync(
+                mapAddress,
+                false
+            );
+
+        yield return clearHandle;
+
+        Debug.Log(
+            "Clear Status: " +
+            clearHandle.Status
+        );
+
+        if (clearHandle.Status ==
+            AsyncOperationStatus.Succeeded)
+        {
+            Debug.Log("========== MAP CACHE CLEARED ==========");
+        }
+        else
+        {
+            Debug.LogError(
+                "CACHE CLEAR FAILED: " +
+                clearHandle.OperationException
+            );
+        }
+
+        Addressables.Release(clearHandle);
+        Addressables.Release(locationsHandle);
+
+        Debug.Log(
+            "Unity Cache Path = " +
+            Caching.defaultCache.path
+        );
+    }
+
+    [ContextMenu("Clear Cache")]
+    public void ClearAddressablesCache()
+    {
+        Debug.Log("=================================");
+        Debug.Log($"Persistent Data: {Application.persistentDataPath}");
+        Debug.Log($"Temporary Cache: {Application.temporaryCachePath}");
+        Debug.Log($"Unity Cache Path: {Caching.defaultCache.path}");
+        Debug.Log("=================================");
+    }
+}
